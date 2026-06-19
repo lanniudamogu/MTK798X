@@ -1,4 +1,4 @@
-name: OpenWrt Builder Multi Device (Stable + Cache + Fixed Apt)
+name: OpenWrt Builder Multi Device (Final Stable)
 
 on:
   repository_dispatch:
@@ -16,10 +16,11 @@ env:
   DIY_P2_SH: diy-part2.sh
   TZ: Asia/Shanghai
 
+
 jobs:
 
 # =========================
-# BUILD
+# BUILD (方案B稳定模式)
 # =========================
   build:
 
@@ -27,9 +28,7 @@ jobs:
 
     strategy:
       fail-fast: false
-
-      # 方案B：串行防止爆盘
-      max-parallel: 1
+      max-parallel: 1   # 防爆盘关键
 
       matrix:
         device:
@@ -48,7 +47,7 @@ jobs:
     # =========================
     # CACHE
     # =========================
-    - name: Cache OpenWrt
+    - name: Cache build
       uses: actions/cache@v4
       with:
         path: |
@@ -61,20 +60,19 @@ jobs:
 
 
     # =========================
-    # INIT ENV (FIXED APT)
+    # INIT ENV（已彻底修复 apt）
     # =========================
     - name: Init environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/*
-        sudo apt update
+        set -e
 
-        # ⭐关键修复：单行 install，避免 YAML/换行解析错误
-        sudo apt install -y build-essential clang flex bison g++ gawk gettext git \
-          libncurses5-dev libncursesw5-dev libssl-dev \
-          python3 python3-setuptools python3-pyelftools \
-          rsync unzip zlib1g-dev file wget curl ccache
+        sudo rm -rf /etc/apt/sources.list.d/*
+        sudo apt-get update
+
+        # ⭐关键修复：单行安装（避免 YAML + shell 断裂）
+        sudo apt-get install -y build-essential clang flex bison g++ gawk gettext git libncurses5-dev libncursesw5-dev libssl-dev python3 python3-setuptools python3-pyelftools rsync unzip zlib1g-dev file wget curl ccache
 
         sudo timedatectl set-timezone "$TZ"
 
@@ -139,9 +137,9 @@ jobs:
         mkdir -p output/${{ matrix.device.name }}
 
         find openwrt/bin/targets \
-        -type f \
-        -name "*sysupgrade.bin" \
-        -exec cp {} output/${{ matrix.device.name }}/sysupgrade.bin \;
+          -type f \
+          -name "*sysupgrade.bin" \
+          -exec cp {} output/${{ matrix.device.name }}/sysupgrade.bin \;
 
 
     - name: Upload artifact
@@ -151,14 +149,12 @@ jobs:
         path: output/${{ matrix.device.name }}
 
 
-
 # =========================
 # RELEASE
 # =========================
   release:
 
     needs: build
-
     runs-on: ubuntu-22.04
 
     steps:
@@ -190,12 +186,11 @@ jobs:
       run: |
         echo "OpenWrt MT798x Multi Device Build" > output/README.txt
         echo "" >> output/README.txt
-        echo "Repository:" >> output/README.txt
-        echo "$REPO_URL" >> output/README.txt
+        echo "Repository: $REPO_URL" >> output/README.txt
         echo "" >> output/README.txt
         echo "Build time: $(date)" >> output/README.txt
         echo "" >> output/README.txt
-        echo "Firmware:" >> output/README.txt
+        echo "Firmware list:" >> output/README.txt
 
         for file in output/*-sysupgrade.bin; do
           [ -f "$file" ] || continue
@@ -207,7 +202,7 @@ jobs:
         done
 
 
-    - name: Generate release tag
+    - name: Generate tag
       id: tag
       run: |
         echo "tag=openwrt-mt798x-$(date +'%Y.%m.%d-%H%M')-run${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
@@ -223,7 +218,7 @@ jobs:
           output/*
 
 
-    - name: Cleanup workflow runs
+    - name: Cleanup workflows
       uses: Mattraks/delete-workflow-runs@v2
       with:
         retain_days: 0
