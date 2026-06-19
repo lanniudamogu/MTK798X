@@ -7,13 +7,21 @@ on:
 permissions:
   contents: write
 
+
 env:
+
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
+
   REPO_BRANCH: openwrt-24.10-6.6
+
   FEEDS_CONF: feeds.conf.default
+
   DIY_P1_SH: diy-part1.sh
+
   DIY_P2_SH: diy-part2.sh
+
   TZ: Asia/Shanghai
 
 
@@ -26,27 +34,40 @@ jobs:
 
   build:
 
+
     runs-on: ubuntu-22.04
+
 
     strategy:
 
+
       fail-fast: false
 
-      # 方案B：串行防止爆空间
+
+      # 方案B：避免两个设备同时吃空间
       max-parallel: 1
+
 
       matrix:
 
+
         device:
 
+
           - name: cudy-tr3000
+
             config: configs/cudy_tr3000.config
 
+
+
           - name: 360t7
+
             config: configs/360t7.config
 
 
+
     steps:
+
 
 
     - name: Checkout
@@ -55,154 +76,292 @@ jobs:
 
 
 
+
+    # =========================
+    # CACHE
+    # =========================
+
+    - name: Cache OpenWrt build
+
+
+      uses: actions/cache@v4
+
+
+      with:
+
+
+        path: |
+
+
+          /workdir/openwrt/dl
+
+
+          /workdir/openwrt/build_dir
+
+
+          ~/.ccache
+
+
+
+        key: openwrt-${{ matrix.device.name }}-${{ github.sha }}
+
+
+
+        restore-keys: |
+
+
+          openwrt-${{ matrix.device.name }}-
+
+
+
+
     - name: Init environment
+
 
       env:
 
+
         DEBIAN_FRONTEND: noninteractive
+
 
       run: |
 
+
         sudo rm -rf /etc/apt/sources.list.d/*
+
 
         sudo apt update
 
+
+
         sudo apt install -y \
+
           build-essential clang flex bison g++ gawk gettext git \
+
           libncurses5-dev libncursesw5-dev libssl-dev \
+
           python3 python3-setuptools python3-pyelftools \
-          rsync unzip zlib1g-dev file wget curl
+
+          rsync unzip zlib1g-dev file wget curl \
+
+          ccache
+
 
 
         sudo timedatectl set-timezone "$TZ"
 
 
+
         sudo mkdir -p /workdir
+
 
         sudo chown $USER:$GROUPS /workdir
 
 
 
-    - name: Clone source
 
-      working-directory: /workdir
+
+    - name: Setup ccache
+
 
       run: |
 
+
+        ccache --version
+
+
+        ccache -M 10G
+
+
+        echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
+
+
+
+
+
+    - name: Clone source
+
+
+      working-directory: /workdir
+
+
+      run: |
+
+
         git clone \
+
           -b $REPO_BRANCH \
+
           $REPO_URL \
+
           openwrt
+
 
 
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
 
 
+
+
     - name: Load feeds
+
 
       run: |
 
+
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+
 
 
         chmod +x $DIY_P1_SH
 
 
+
         cd openwrt
+
 
 
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
 
 
+
+
+
     - name: Update feeds
 
+
       run:
+
 
         cd openwrt && ./scripts/feeds update -a
 
 
 
+
+
     - name: Install feeds
 
+
       run:
+
 
         cd openwrt && ./scripts/feeds install -a
 
 
 
+
+
+
     - name: Load device config
+
 
       run: |
 
+
         cp ${{ matrix.device.config }} openwrt/.config
+
 
 
         [ -e files ] && mv files openwrt/files
 
 
+
         chmod +x $DIY_P2_SH
 
 
+
         cd openwrt
+
 
 
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
 
 
+
+
+
     - name: Download packages
+
 
       run: |
 
+
         cd openwrt
+
 
 
         make defconfig
 
 
+
         make download -j$(nproc)
+
 
 
         find dl -size -1024c -delete
 
 
 
+
+
+
     - name: Compile firmware
+
 
       run: |
 
+
         cd openwrt
+
 
 
         make -j$(nproc) || make -j1 V=s
 
 
 
+
+
+
     - name: Collect sysupgrade
 
+
       run: |
+
 
         mkdir -p output/${{ matrix.device.name }}
 
 
+
         find openwrt/bin/targets \
+
         -type f \
+
         -name "*sysupgrade.bin" \
+
         -exec cp {} output/${{ matrix.device.name }}/sysupgrade.bin \;
+
 
 
 
     - name: Upload artifact
 
+
       uses: actions/upload-artifact@v4
+
 
       with:
 
+
         name: firmware-${{ matrix.device.name }}
 
+
         path: output/${{ matrix.device.name }}
+
+
 
 
 
@@ -226,51 +385,71 @@ jobs:
 
 
 
+
     - name: Download artifacts
+
 
       uses: actions/download-artifact@v4
 
+
       with:
+
 
         path: release
 
 
 
 
+
+
     - name: Organize firmware
+
 
       run: |
 
+
         mkdir -p output
+
 
 
         for dir in release/*; do
 
 
+
           [ -d "$dir" ] || continue
 
 
+
           device=$(basename "$dir")
+
 
 
           file=$(find "$dir" -name "sysupgrade.bin" | head -n 1)
 
 
 
+
           if [ -n "$file" ]; then
 
 
+
             cp "$file" \
+
             output/${device}-sysupgrade.bin
 
 
 
+
             sha256sum "$file" \
+
             | awk '{print $1}' \
+
             > output/${device}-sha256sum.txt
 
 
+
           fi
+
 
 
         done
@@ -279,19 +458,22 @@ jobs:
 
 
 
-    # 自动生成 README
 
     - name: Generate README
+
 
       run: |
 
 
+
         echo "OpenWrt MT798x Multi Device Build" > output/README.txt
+
 
         echo "" >> output/README.txt
 
 
         echo "Repository:" >> output/README.txt
+
 
         echo "$REPO_URL" >> output/README.txt
 
@@ -308,23 +490,34 @@ jobs:
         echo "Firmware:" >> output/README.txt
 
 
+
+
         for file in output/*-sysupgrade.bin; do
+
 
 
           [ -f "$file" ] || continue
 
 
+
+
           name=$(basename "$file")
+
 
 
           sha=$(sha256sum "$file" | awk '{print $1}')
 
 
+
+
           echo "" >> output/README.txt
+
 
           echo "- $name" >> output/README.txt
 
+
           echo "  SHA256: $sha" >> output/README.txt
+
 
 
         done
@@ -333,21 +526,29 @@ jobs:
 
 
 
+
     - name: Generate release tag
+
 
       id: tag
 
+
       run: |
 
+
         echo \
+
         "tag=openwrt-mt798x-$(date +'%Y.%m.%d-%H%M')-run${GITHUB_RUN_NUMBER}" \
+
         >> $GITHUB_OUTPUT
 
 
 
 
 
+
     - name: Create Release
+
 
       uses: softprops/action-gh-release@v2
 
@@ -366,18 +567,25 @@ jobs:
 
         files: |
 
+
           output/*
+
+
 
 
 
 
     - name: Delete old workflow runs
 
+
       uses: Mattraks/delete-workflow-runs@v2
+
 
       with:
 
+
         retain_days: 0
+
 
         keep_minimum_runs: 2
 
@@ -385,18 +593,23 @@ jobs:
 
 
 
+
     - name: Delete old releases
+
 
       uses: dev-drprasad/delete-older-releases@v0.3.4
 
 
       with:
 
+
         keep_latest: 3
+
 
         delete_tags: true
 
 
       env:
+
 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
