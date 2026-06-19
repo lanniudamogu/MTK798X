@@ -1,4 +1,4 @@
-name: OpenWrt Builder Multi Device (Stable + Auto README)
+name: OpenWrt Builder Multi Device (Stable + Safe YAML)
 
 on:
   repository_dispatch:
@@ -11,7 +11,6 @@ env:
   FEEDS_CONF: feeds.conf.default
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -24,7 +23,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      max-parallel: 1   # ⭐关键：串行防爆盘
+      max-parallel: 1   # ⭐方案B核心：串行防爆盘
 
       matrix:
         device:
@@ -93,13 +92,11 @@ jobs:
         find dl -size -1024c -delete
 
     - name: Compile firmware
-      id: compile
       run: |
         cd openwrt
         make -j$(nproc) || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Collect sysupgrade
+    - name: Collect sysupgrade only
       run: |
         mkdir -p output/${{ matrix.device.name }}
 
@@ -114,7 +111,7 @@ jobs:
         path: output/${{ matrix.device.name }}
 
 # =========================
-# RELEASE (AUTO GENERATE)
+# RELEASE (NO YAML RISK VERSION)
 # =========================
   release:
     needs: build
@@ -132,6 +129,8 @@ jobs:
         mkdir -p output
 
         for dir in release/*; do
+          [ -d "$dir" ] || continue
+
           device=$(basename "$dir")
           mkdir -p output/$device
 
@@ -143,31 +142,32 @@ jobs:
           fi
         done
 
-    # ⭐ 自动生成 README（核心）
-    - name: Generate README automatically
+    # =========================
+    # ⭐ SAFE README（无EOF版本）
+    # =========================
+    - name: Generate README safely
       run: |
-        cat > output/README.txt <<EOF
-OpenWrt MT798x Multi Device Build
-
-Repository: ImmortalWrt MT798x 6.6
-Build time: $(date)
-
-Devices:
-EOF
+        echo "OpenWrt MT798x Multi Device Build" > output/README.txt
+        echo "" >> output/README.txt
+        echo "Repository: ImmortalWrt MT798x 6.6" >> output/README.txt
+        echo "Build time: $(date)" >> output/README.txt
+        echo "" >> output/README.txt
+        echo "Devices:" >> output/README.txt
+        echo "" >> output/README.txt
 
         for dir in output/*; do
           [ -d "$dir" ] || continue
 
           device=$(basename "$dir")
-          bin=$(find "$dir" -name "sysupgrade.bin" | head -n 1)
+          file=$(find "$dir" -name "sysupgrade.bin" | head -n 1)
 
-          if [ -n "$bin" ]; then
-            sha=$(sha256sum "$bin" | awk '{print $1}')
+          if [ -n "$file" ]; then
+            sha=$(sha256sum "$file" | awk '{print $1}')
 
-            echo "" >> output/README.txt
             echo "- $device" >> output/README.txt
             echo "  File: sysupgrade.bin" >> output/README.txt
             echo "  SHA256: $sha" >> output/README.txt
+            echo "" >> output/README.txt
           fi
         done
 
