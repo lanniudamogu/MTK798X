@@ -37,25 +37,20 @@ jobs:
 
   build:
 
-
     runs-on: ubuntu-22.04
 
 
     strategy:
 
-
       fail-fast: false
 
-
-      # 方案B：一个设备编完再编另一个
+      # 方案B：设备串行
       max-parallel: 1
 
 
       matrix:
 
-
         device:
-
 
           - name: cudy-tr3000
             config: configs/cudy_tr3000.config
@@ -69,38 +64,29 @@ jobs:
     steps:
 
 
-
     - name: Checkout
 
       uses: actions/checkout@v4
 
 
 
-
-
-    # =========================
-    # CACHE
-    # =========================
+# =========================
+# CACHE
+# =========================
 
     - name: Cache OpenWrt
 
       uses: actions/cache@v4
 
-
       with:
-
 
         path: |
 
-
           /workdir/openwrt/dl
-
 
           /workdir/openwrt/build_dir
 
-
           ~/.ccache
-
 
 
         key: openwrt-${{ matrix.device.name }}-${{ github.sha }}
@@ -108,46 +94,57 @@ jobs:
 
         restore-keys: |
 
-
           openwrt-${{ matrix.device.name }}-
 
 
 
-
-    # =========================
-    # ENV
-    # =========================
+# =========================
+# ENV
+# =========================
 
     - name: Init environment
 
-
       env:
-
 
         DEBIAN_FRONTEND: noninteractive
 
 
       run: |
 
-
         set -e
-
 
 
         sudo rm -rf /etc/apt/sources.list.d/*
 
 
-
         sudo apt-get update
 
 
-
-        sudo apt-get install -y build-essential clang flex bison g++ gawk gettext git libncurses5-dev libncursesw5-dev libssl-dev python3 python3-setuptools python3-pyelftools rsync unzip zlib1g-dev file wget curl ccache
-
+        sudo apt-get install -y \
+        build-essential \
+        clang \
+        flex \
+        bison \
+        g++ \
+        gawk \
+        gettext \
+        git \
+        libncurses5-dev \
+        libncursesw5-dev \
+        libssl-dev \
+        python3 \
+        python3-setuptools \
+        python3-pyelftools \
+        rsync \
+        unzip \
+        zlib1g-dev \
+        file \
+        wget \
+        curl \
+        ccache
 
 
         sudo timedatectl set-timezone "$TZ"
-
 
 
         sudo mkdir -p /workdir
@@ -157,37 +154,25 @@ jobs:
 
 
 
-
-
-
     - name: Setup ccache
-
 
       run: |
 
-
         ccache -M 10G
-
 
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
 
 
-
-
-    # =========================
-    # SOURCE
-    # =========================
-
+# =========================
+# SOURCE
+# =========================
 
     - name: Clone source
 
-
       working-directory: /workdir
 
-
       run: |
-
 
         git clone \
         -b $REPO_BRANCH \
@@ -195,81 +180,62 @@ jobs:
         openwrt
 
 
-
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
-
-
 
 
 
     - name: Load feeds
 
-
       run: |
 
-
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-
 
 
         chmod +x $DIY_P1_SH
 
 
-
         cd openwrt
-
 
 
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
 
 
-
-
     - name: Update feeds
 
+      run: |
 
-      run:
+        cd openwrt
 
-
-        cd openwrt && ./scripts/feeds update -a
-
-
+        ./scripts/feeds update -a
 
 
 
     - name: Install feeds
 
+      run: |
 
-      run:
+        cd openwrt
 
-
-        cd openwrt && ./scripts/feeds install -a
-
+        ./scripts/feeds install -a
 
 
 
 
     - name: Load device config
 
-
       run: |
 
-
         cp ${{ matrix.device.config }} openwrt/.config
-
 
 
         [ -e files ] && mv files openwrt/files
 
 
-
         chmod +x $DIY_P2_SH
 
 
-
         cd openwrt
-
 
 
         $GITHUB_WORKSPACE/$DIY_P2_SH
@@ -277,24 +243,21 @@ jobs:
 
 
 
-
+# =========================
+# BUILD
+# =========================
 
     - name: Download package
 
-
       run: |
 
-
         cd openwrt
-
 
 
         make defconfig
 
 
-
         make download -j$(nproc)
-
 
 
         find dl -size -1024c -delete
@@ -302,16 +265,11 @@ jobs:
 
 
 
-
-
     - name: Compile firmware
-
 
       run: |
 
-
         cd openwrt
-
 
 
         make -j$(nproc) || make -j1 V=s
@@ -319,42 +277,54 @@ jobs:
 
 
 
+# =========================
+# ONLY SYSUPGRADE
+# =========================
 
-
-    # 保留原始文件名
-    - name: Collect firmware
-
+    - name: Collect squashfs sysupgrade
 
       run: |
-
 
         mkdir -p output/${{ matrix.device.name }}
 
 
-
-        find openwrt/bin/targets \
+        FILE=$(find openwrt/bin/targets \
         -type f \
         -name "*squashfs-sysupgrade.bin" \
-        -exec cp --preserve=mode,timestamps {} output/${{ matrix.device.name }}/ \;
+        | head -n 1)
+
+
+        if [ -z "$FILE" ]; then
+
+          echo "ERROR: squashfs-sysupgrade.bin not found"
+
+          exit 1
+
+        fi
+
+
+        echo "Selected firmware:"
+
+
+        ls -lh "$FILE"
+
+
+        cp "$FILE" \
+        output/${{ matrix.device.name }}/
 
 
 
 
-
-    - name: Upload artifact
-
+    - name: Upload firmware artifact
 
       uses: actions/upload-artifact@v4
 
 
       with:
 
-
         name: firmware-${{ matrix.device.name }}
 
-
         path: output/${{ matrix.device.name }}
-
 
 
 
@@ -363,7 +333,6 @@ jobs:
 # =========================
 # RELEASE
 # =========================
-
 
   release:
 
@@ -378,50 +347,35 @@ jobs:
     steps:
 
 
-
     - name: Download artifacts
-
 
       uses: actions/download-artifact@v4
 
 
       with:
 
-
         path: release
 
 
 
 
-
-
-    # 不改名，只收集原文件
-    - name: Organize firmware
-
+    - name: Collect release files
 
       run: |
-
 
         mkdir -p output
 
 
-
-        for dir in release/*; do
-
-
-          [ -d "$dir" ] || continue
-
+        find release \
+        -type f \
+        -name "*squashfs-sysupgrade.bin" \
+        -exec cp {} output/ \;
 
 
-          find "$dir" \
-          -type f \
-          -name "*squashfs-sysupgrade.bin" \
-          -exec cp {} output/ \;
+        echo "Final Release files:"
 
 
-
-        done
-
+        ls -lh output/
 
 
 
@@ -429,22 +383,16 @@ jobs:
 
     - name: Generate SHA256
 
-
       run: |
-
 
         cd output
 
 
-
         for file in *squashfs-sysupgrade.bin; do
-
 
           sha256sum "$file" > "$file.sha256"
 
-
         done
-
 
 
 
@@ -452,28 +400,20 @@ jobs:
 
     - name: Generate README
 
-
       run: |
 
-
         echo "OpenWrt MT798x Multi Device Build" > output/README.txt
-
 
 
         echo "" >> output/README.txt
 
 
-
         echo "Firmware:" >> output/README.txt
-
 
 
         for file in output/*squashfs-sysupgrade.bin; do
 
-
-          echo "- $(basename $file)" >> output/README.txt
-
-
+          echo "- $(basename "$file")" >> output/README.txt
 
         done
 
@@ -481,15 +421,11 @@ jobs:
 
 
 
-
     - name: Generate tag
-
 
       id: tag
 
-
       run: |
-
 
         echo "tag=openwrt-mt798x-$(date +'%Y.%m.%d-%H%M')-run${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
 
@@ -497,12 +433,9 @@ jobs:
 
 
 
-
     - name: Create Release
 
-
       uses: softprops/action-gh-release@v2
-
 
 
       with:
@@ -511,66 +444,49 @@ jobs:
         tag_name: ${{ steps.tag.outputs.tag }}
 
 
-
         name: ${{ steps.tag.outputs.tag }}
-
 
 
         body_path: output/README.txt
 
 
-
         files: |
-
 
           output/*squashfs-sysupgrade.bin
 
-
           output/*.sha256
-
 
           output/README.txt
 
 
 
 
-
-
     - name: Delete old workflow runs
-
 
       uses: Mattraks/delete-workflow-runs@v2
 
 
       with:
 
-
         retain_days: 0
-
 
         keep_minimum_runs: 2
 
 
 
 
-
-
     - name: Delete old releases
-
 
       uses: dev-drprasad/delete-older-releases@v0.3.4
 
 
       with:
 
-
         keep_latest: 3
-
 
         delete_tags: true
 
 
       env:
-
 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
