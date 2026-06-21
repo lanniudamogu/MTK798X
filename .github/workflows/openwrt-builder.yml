@@ -1,492 +1,282 @@
 name: OpenWrt Builder Multi Device Final
 
-
 on:
   repository_dispatch:
   workflow_dispatch:
 
-
 permissions:
   contents: write
 
-
 env:
-
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
-
   REPO_BRANCH: openwrt-24.10-6.6
-
   FEEDS_CONF: feeds.conf.default
-
   DIY_P1_SH: diy-part1.sh
-
   DIY_P2_SH: diy-part2.sh
-
   TZ: Asia/Shanghai
-
 
 
 jobs:
 
-
 # =========================
-# BUILD
+# BUILD（方案B）
 # =========================
-
   build:
 
     runs-on: ubuntu-22.04
 
-
     strategy:
-
       fail-fast: false
-
-      # 方案B：设备串行
       max-parallel: 1
 
-
       matrix:
-
         device:
-
           - name: cudy-tr3000
             config: configs/cudy_tr3000.config
-
-
           - name: 360t7
             config: configs/360t7.config
 
 
-
     steps:
 
-
     - name: Checkout
-
       uses: actions/checkout@v4
 
 
+    - name: Init environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang flex bison g++ gawk gettext git \
+        libncurses5-dev libncursesw5-dev libssl-dev python3 python3-pyelftools \
+        rsync unzip zlib1g-dev file wget curl ccache binwalk squashfs-tools gh
 
-# =========================
-# CACHE
-# =========================
 
     - name: Cache OpenWrt
-
       uses: actions/cache@v4
-
       with:
-
         path: |
-
           /workdir/openwrt/dl
-
           /workdir/openwrt/build_dir
-
           ~/.ccache
-
-
         key: openwrt-${{ matrix.device.name }}-${{ github.sha }}
-
-
-        restore-keys: |
-
-          openwrt-${{ matrix.device.name }}-
-
-
-
-# =========================
-# ENV
-# =========================
-
-    - name: Init environment
-
-      env:
-
-        DEBIAN_FRONTEND: noninteractive
-
-
-      run: |
-
-        set -e
-
-
-        sudo rm -rf /etc/apt/sources.list.d/*
-
-
-        sudo apt-get update
-
-
-        sudo apt-get install -y \
-        build-essential \
-        clang \
-        flex \
-        bison \
-        g++ \
-        gawk \
-        gettext \
-        git \
-        libncurses5-dev \
-        libncursesw5-dev \
-        libssl-dev \
-        python3 \
-        python3-setuptools \
-        python3-pyelftools \
-        rsync \
-        unzip \
-        zlib1g-dev \
-        file \
-        wget \
-        curl \
-        ccache
-
-
-        sudo timedatectl set-timezone "$TZ"
-
-
-        sudo mkdir -p /workdir
-
-
-        sudo chown $USER:$GROUPS /workdir
-
+        restore-keys: openwrt-${{ matrix.device.name }}-
 
 
     - name: Setup ccache
-
       run: |
-
         ccache -M 10G
-
         echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
 
 
-
-# =========================
-# SOURCE
-# =========================
-
     - name: Clone source
-
-      working-directory: /workdir
-
       run: |
-
-        git clone \
-        -b $REPO_BRANCH \
-        $REPO_URL \
-        openwrt
-
-
+        mkdir -p /workdir
+        cd /workdir
+        git clone -b $REPO_BRANCH $REPO_URL openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
 
-
-    - name: Load feeds
-
+    - name: Load config
       run: |
-
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-
-
-        chmod +x $DIY_P1_SH
-
-
-        cd openwrt
-
-
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-
-
-
-    - name: Update feeds
-
-      run: |
-
-        cd openwrt
-
-        ./scripts/feeds update -a
-
-
-
-    - name: Install feeds
-
-      run: |
-
-        cd openwrt
-
-        ./scripts/feeds install -a
-
-
-
-
-    - name: Load device config
-
-      run: |
-
         cp ${{ matrix.device.config }} openwrt/.config
-
-
-        [ -e files ] && mv files openwrt/files
-
-
-        chmod +x $DIY_P2_SH
-
-
         cd openwrt
-
-
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-
-
-
-
-# =========================
-# BUILD
-# =========================
-
-    - name: Download package
-
-      run: |
-
-        cd openwrt
-
-
         make defconfig
 
 
-        make download -j$(nproc)
-
-
-        find dl -size -1024c -delete
-
-
-
-
-    - name: Compile firmware
-
+    - name: Build firmware
       run: |
-
         cd openwrt
-
-
+        make download -j$(nproc)
         make -j$(nproc) || make -j1 V=s
 
 
-
-
-# =========================
-# ONLY SYSUPGRADE
-# =========================
-
-    - name: Collect squashfs sysupgrade
-
+    - name: Collect firmware
       run: |
-
         mkdir -p output/${{ matrix.device.name }}
 
-
         FILE=$(find openwrt/bin/targets \
-        -type f \
-        -name "*squashfs-sysupgrade.bin" \
-        | head -n 1)
-
-
-        if [ -z "$FILE" ]; then
-
-          echo "ERROR: squashfs-sysupgrade.bin not found"
-
-          exit 1
-
-        fi
-
+          -type f \
+          -name "*${{ matrix.device.name }}*squashfs-sysupgrade.bin" \
+          | head -n 1)
 
         echo "Selected firmware:"
-
-
         ls -lh "$FILE"
 
-
-        cp "$FILE" \
-        output/${{ matrix.device.name }}/
+        cp "$FILE" output/${{ matrix.device.name }}/
 
 
-
-
-    - name: Upload firmware artifact
-
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
-
-
       with:
-
-        name: firmware-${{ matrix.device.name }}
-
+        name: fw-${{ matrix.device.name }}
         path: output/${{ matrix.device.name }}
 
 
-
-
-
 # =========================
-# RELEASE
+# RELEASE + DIFF + CLEAN
 # =========================
-
   release:
 
-
     needs: build
-
-
     runs-on: ubuntu-22.04
-
-
 
     steps:
 
+    - name: Checkout
+      uses: actions/checkout@v4
+
+
+    - name: Install tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y binwalk squashfs-tools gh
+
 
     - name: Download artifacts
-
       uses: actions/download-artifact@v4
-
-
       with:
-
         path: release
 
 
-
-
-    - name: Collect release files
-
+    - name: Prepare firmware
       run: |
-
         mkdir -p output
-
-
-        find release \
-        -type f \
-        -name "*squashfs-sysupgrade.bin" \
-        -exec cp {} output/ \;
-
-
-        echo "Final Release files:"
-
-
+        cp release/*/*.bin output/
         ls -lh output/
 
 
-
-
-
     - name: Generate SHA256
-
       run: |
-
         cd output
-
-
-        for file in *squashfs-sysupgrade.bin; do
-
-          sha256sum "$file" > "$file.sha256"
-
-        done
-
-
-
+        sha256sum *.bin > SHA256SUMS.txt
 
 
     - name: Generate README
-
       run: |
-
         echo "OpenWrt MT798x Multi Device Build" > output/README.txt
-
-
         echo "" >> output/README.txt
+        ls *.bin >> output/README.txt
 
 
-        echo "Firmware:" >> output/README.txt
-
-
-        for file in output/*squashfs-sysupgrade.bin; do
-
-          echo "- $(basename "$file")" >> output/README.txt
-
-        done
-
-
-
-
-
-    - name: Generate tag
-
-      id: tag
-
+    # =========================
+    # GET BASELINE (last release)
+    # =========================
+    - name: Download previous release (baseline)
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
+        mkdir -p baseline
 
-        echo "tag=openwrt-mt798x-$(date +'%Y.%m.%d-%H%M')-run${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
+        LAST_TAG=$(gh release list --limit 1 --json tagName -q '.[0].tagName' || true)
+
+        echo "Last release: $LAST_TAG"
+
+        if [ -n "$LAST_TAG" ]; then
+          gh release download "$LAST_TAG" \
+            --pattern "*squashfs-sysupgrade.bin" \
+            -D baseline || true
+        fi
+
+        ls -lh baseline || true
 
 
+    # =========================
+    # DIFF ANALYSIS
+    # =========================
+    - name: Firmware diff analysis
+      run: |
+        echo "=============================="
+        echo " OpenWrt Diff Report"
+        echo "=============================="
+
+        NEW=$(ls output/*squashfs-sysupgrade.bin | head -n 1)
+        OLD=$(ls baseline/*squashfs-sysupgrade.bin | head -n 1 || true)
+
+        echo "NEW: $NEW"
+        echo "OLD: $OLD"
+
+        echo ""
+        echo "=== SIZE ==="
+        ls -lh $NEW
+        ls -lh $OLD || true
+
+        echo ""
+        echo "=== PACKAGE DIFF ==="
+
+        extract() {
+          BIN=$1
+          OUT=$2
+
+          OFFSET=$(binwalk "$BIN" | grep -i squashfs | head -n 1 | awk '{print $1}')
+
+          [ -z "$OFFSET" ] && return
+
+          dd if="$BIN" bs=1 skip="$OFFSET" of="$OUT.squashfs" 2>/dev/null || true
+          unsquashfs -l "$OUT.squashfs" > "$OUT.pkgs" 2>/dev/null || true
+        }
+
+        extract "$NEW" /tmp/new
+        extract "$OLD" /tmp/old
+
+        echo ""
+        echo "+++ Added packages:"
+        diff -u /tmp/old.pkgs /tmp/new.pkgs | grep "^+" | head -n 50 || true
+
+        echo ""
+        echo "+++ Removed packages:"
+        diff -u /tmp/old.pkgs /tmp/new.pkgs | grep "^-" | head -n 50 || true
 
 
+    # =========================
+    # TAG
+    # =========================
+    - name: Generate tag
+      id: tag
+      run: |
+        TAG="openwrt-mt798x-$(date +'%Y.%m.%d-%H%M')-run${GITHUB_RUN_NUMBER}"
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
 
+
+    # =========================
+    # RELEASE
+    # =========================
     - name: Create Release
-
       uses: softprops/action-gh-release@v2
-
-
       with:
-
-
         tag_name: ${{ steps.tag.outputs.tag }}
-
-
         name: ${{ steps.tag.outputs.tag }}
-
-
         body_path: output/README.txt
-
-
         files: |
-
-          output/*squashfs-sysupgrade.bin
-
+          output/*.bin
           output/*.sha256
-
           output/README.txt
 
 
-
-
-    - name: Delete old workflow runs
-
-      uses: Mattraks/delete-workflow-runs@v2
-
-
-      with:
-
-        retain_days: 0
-
-        keep_minimum_runs: 2
-
-
-
-
-    - name: Delete old releases
-
-      uses: dev-drprasad/delete-older-releases@v0.3.4
-
-
-      with:
-
-        keep_latest: 3
-
-        delete_tags: true
-
-
+    # =========================
+    # SAFE CLEAN RELEASES (keep 3)
+    # =========================
+    - name: Cleanup old releases (safe)
       env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "Cleaning old releases..."
 
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        LIST=$(gh release list --limit 100 --json tagName -q '.[].tagName')
+
+        COUNT=0
+
+        for tag in $LIST; do
+          COUNT=$((COUNT+1))
+
+          if [ $COUNT -le 3 ]; then
+            echo "KEEP: $tag"
+            continue
+          fi
+
+          echo "DELETE: $tag"
+
+          gh release delete "$tag" -y || true
+          git push origin ":refs/tags/$tag" || true
+
+        done
